@@ -1,0 +1,7 @@
+# Ignore personal chat data and generated files
+Chat/
+*.html
+*.pdf
+*.zip
+__pycache__/
+*.pyc
