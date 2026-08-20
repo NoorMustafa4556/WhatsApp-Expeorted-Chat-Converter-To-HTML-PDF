@@ -1,2 +1,2 @@
-# No external dependencies required.
-# This script uses only built-in Python standard libraries (os, html, glob, datetime).
+openpyxl
+pillow

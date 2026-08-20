@@ -1,8 +1,10 @@
 import os
 import html
-import html
 import glob
+import csv
 from datetime import datetime
+from openpyxl import Workbook
+from openpyxl.drawing.image import Image as ExcelImage
 
 def detect_date_format(timestamps):
     formats = [
@@ -277,6 +279,137 @@ def main():
     # Sort messages by timestamp
     messages.sort(key=lambda x: x[0])
 
+    # Generate Excel (XLSX) Logs
+    logs_data = []
+    current_issue = None
+
+    for timestamp, sender, message, timestamp_str in messages:
+        # Check if media and replace
+        clean_msg = message
+        is_image = False
+        img_path = None
+        
+        if '(file attached)' in clean_msg or '<attached:' in clean_msg or '<Media omitted>' in clean_msg:
+            if '.jpg' in clean_msg.lower() or '.png' in clean_msg.lower() or 'img-' in clean_msg.lower():
+                if '(file attached)' in clean_msg:
+                    img_filename = clean_msg.split(' (file attached)')[0]
+                else:
+                    try:
+                        img_filename = clean_msg.split('<attached: ')[1].split('>')[0]
+                    except:
+                        img_filename = ""
+                img_path = os.path.join(subfolder_path, img_filename)
+                clean_msg = "[View Picture In Next Column]"
+                is_image = True
+            elif '.opus' in clean_msg.lower() or '.mp3' in clean_msg.lower() or 'ptt-' in clean_msg.lower() or 'aud-' in clean_msg.lower():
+                clean_msg = "[Voice Message...]"
+            else:
+                clean_msg = "[Media...]"
+
+        is_asif = (sender != my_name)
+
+        if is_asif:
+            if current_issue and current_issue['Resolution']:
+                logs_data.append(current_issue)
+                current_issue = None
+            
+            if not current_issue:
+                date_val = timestamp.strftime('%Y-%m-%d') if timestamp else ''
+                time_val = timestamp.strftime('%I:%M %p') if timestamp else ''
+                current_issue = {
+                    'Date': date_val,
+                    'Time': time_val,
+                    'Issue': clean_msg,
+                    'Raised By': sender,
+                    'Resolution': '',
+                    'Resolved By': my_name,
+                    'Images': []
+                }
+            else:
+                current_issue['Issue'] += '\n' + clean_msg
+                
+            if is_image and img_path and os.path.exists(img_path):
+                current_issue['Images'].append((img_path, 'Issue'))
+        else:
+            if not current_issue:
+                date_val = timestamp.strftime('%Y-%m-%d') if timestamp else ''
+                time_val = timestamp.strftime('%I:%M %p') if timestamp else ''
+                current_issue = {
+                    'Date': date_val,
+                    'Time': time_val,
+                    'Issue': '',
+                    'Raised By': 'Unknown',
+                    'Resolution': clean_msg,
+                    'Resolved By': my_name,
+                    'Images': []
+                }
+            else:
+                if current_issue['Resolution']:
+                    current_issue['Resolution'] += '\n' + clean_msg
+                else:
+                    current_issue['Resolution'] = clean_msg
+                    
+            if is_image and img_path and os.path.exists(img_path):
+                current_issue['Images'].append((img_path, 'Resolution'))
+
+    if current_issue:
+        logs_data.append(current_issue)
+
+    output_xlsx_path = f'{folder_name}_Logs_v{version_number}.xlsx'
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Logs"
+    
+    headers = ['Date', 'Time', 'Issue', 'Raised By', 'Resolution', 'Resolved By']
+    for i in range(1, 11): headers.append(f'Issue Pic {i}')
+    for i in range(1, 11): headers.append(f'Res Pic {i}')
+    ws.append(headers)
+    
+    ws.column_dimensions['A'].width = 12
+    ws.column_dimensions['B'].width = 12
+    ws.column_dimensions['C'].width = 50
+    ws.column_dimensions['D'].width = 20
+    ws.column_dimensions['E'].width = 50
+    ws.column_dimensions['F'].width = 20
+
+    for i, issue in enumerate(logs_data):
+        row_num = i + 2
+        ws.cell(row=row_num, column=1, value=issue['Date'])
+        ws.cell(row=row_num, column=2, value=issue['Time'])
+        ws.cell(row=row_num, column=3, value=issue['Issue'])
+        ws.cell(row=row_num, column=4, value=issue['Raised By'])
+        ws.cell(row=row_num, column=5, value=issue['Resolution'])
+        ws.cell(row=row_num, column=6, value=issue['Resolved By'])
+        
+        issue_imgs = [img for img, col in issue['Images'] if col == 'Issue']
+        for idx, img_path in enumerate(issue_imgs):
+            if idx >= 10: break # Max 10 images
+            col_idx = 7 + idx
+            cell = ws.cell(row=row_num, column=col_idx, value=f"View Image {idx+1}")
+            cell.hyperlink = os.path.abspath(img_path)
+            cell.style = "Hyperlink"
+            ws.column_dimensions[cell.column_letter].width = 15
+
+        res_imgs = [img for img, col in issue['Images'] if col == 'Resolution']
+        for idx, img_path in enumerate(res_imgs):
+            if idx >= 10: break # Max 10 images
+            col_idx = 17 + idx
+            cell = ws.cell(row=row_num, column=col_idx, value=f"View Res Image {idx+1}")
+            cell.hyperlink = os.path.abspath(img_path)
+            cell.style = "Hyperlink"
+            ws.column_dimensions[cell.column_letter].width = 15
+
+    wb.save(output_xlsx_path)
+
+    import base64
+    with open(output_xlsx_path, "rb") as xlsx_file:
+        encoded_xlsx = base64.b64encode(xlsx_file.read()).decode('utf-8')
+    
+    xlsx_data_uri = f"data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{encoded_xlsx}"
+    
+    # Delete the temporary Excel file so it's not generated automatically on disk
+    os.remove(output_xlsx_path)
+
     html_content = '''
 <html>
 <head>
@@ -328,6 +461,9 @@ function createSummary() {
     <button class="print-btn" onclick="window.print()" style="padding: 10px 20px; font-size: 16px; background-color: #25D366; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
         📥 Download PDF
     </button>
+    <a href="''' + xlsx_data_uri + '''" download="''' + output_xlsx_path + '''" class="print-btn" style="text-decoration: none; padding: 10px 20px; margin-left: 10px; font-size: 16px; background-color: #107c41; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+        📊 Download Excel
+    </a>
 </div>
 <!-- <button onclick="createSummary()">Create Summary</button><br/><br/> -->
 '''
